@@ -1,0 +1,12 @@
+[package]
+name = "redirector"
+version = "0.1.0"
+authors = ["Haptics NUC <hapticsnuc@alexburka.com>"]
+
+[lib]
+name = "redirector"
+crate-type = ["dylib"]
+
+[dependencies]
+libc = "0.1.8"
+

@@ -27,15 +27,15 @@ macro_rules! get_fn {
     }}
 }
 
-/*
 // notation:
 //   abn: arg-before-name
 //   abt: arg-before-type
 //   aan: arg-after-type
 //   aat: arg-after-type
 //   "before" and "after" the arg-to-replace
+// syntax is non-ideal, but see rust-lang/rust #26444
 macro_rules! intercept {
-    ($name:ident($($abn:ident: $abt:ty),*; $replace:ident; $($aan:ident: $aat:ty),*) -> $ret:ty) => {
+    ($name:ident([$($abn:ident: $abt:ty),*] $replace:ident [$($aan:ident: $aat:ty),*]) -> $ret:ty) => {
         #[no_mangle]
         pub fn $name($($abn:$abt,)* $replace: *const c_char $(,$aan:$aat)*) -> $ret {
             let real: extern fn($($abt,)* *const c_char $(,$aat)*) -> $ret = get_fn!(stringify!($name));
@@ -43,53 +43,14 @@ macro_rules! intercept {
             let requested = str::from_utf8(unsafe { CStr::from_ptr($replace) }.to_bytes()).unwrap();
             let used = redirect(requested);
 
-            real($($abn,)* $replace $(,$aan)*)
+            real($($abn,)* CString::new(used).unwrap().as_ptr() $(,$aan)*)
         }
     }
 }
 
-intercept!(__xstat64(ver: c_int; path; buf: *mut libc::stat) -> c_int);
-intercept!(opendir(; name ;) -> *const DIR);
-*/
-
-#[no_mangle]
-pub fn __xstat64(ver: c_int, path: *const c_char, buf: *mut libc::stat) -> c_int {
-    let stat_fn: extern fn(c_int, *const c_char, *mut libc::stat) -> c_int = get_fn!("__xstat64");
-
-    let requested_path = str::from_utf8(unsafe { CStr::from_ptr(path) }.to_bytes()).unwrap();
-    let used_path = redirect(requested_path);
-
-    test_println!("request __xstat64({}, \"{}\", {:?})", ver, requested_path, buf);
-    test_println!("calling __xstat64({}, \"{}\", {:?})", ver, used_path, buf);
-
-    stat_fn(ver, CString::new(used_path).unwrap().as_ptr(), buf)
-}
-
-#[no_mangle]
-pub fn opendir(name: *const c_char) -> *const DIR {
-    let opendir_fn: extern fn(*const c_char) -> *const DIR = get_fn!("opendir");
-
-    let requested_path = str::from_utf8(unsafe { CStr::from_ptr(name) }.to_bytes()).unwrap();
-    let used_path = redirect(requested_path);
-
-    test_println!("request opendir(\"{}\")", requested_path);
-    test_println!("calling opendir(\"{}\")", used_path);
-
-    opendir_fn(CString::new(used_path).unwrap().as_ptr())
-}
-
-#[no_mangle]
-pub fn open(pathname: *const c_char, flags: c_int) -> c_int {
-    let open_fn: extern fn(*const c_char, c_int) -> c_int = get_fn!("open");
-
-    let requested_path = str::from_utf8(unsafe { CStr::from_ptr(pathname) }.to_bytes()).unwrap();
-    let used_path = redirect(requested_path);
-
-    test_println!("request open(\"{}\", {})", requested_path, flags);
-    test_println!("calling open(\"{}\", {})", used_path, flags);
-
-    open_fn(CString::new(used_path).unwrap().as_ptr(), flags)
-}
+intercept!(__xstat64([ver: c_int] path [buf: *mut libc::stat]) -> c_int);
+intercept!(opendir([] name []) -> *const DIR);
+intercept!(open([] pathname [flags: c_int]) -> c_int);
 
 #[cfg(test)]
 fn call_stat(file: &str) {

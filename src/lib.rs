@@ -21,7 +21,9 @@ fn redirect(path: &str) -> String {
 
 macro_rules! get_fn {
     ($name:expr) => {{
-        let fnptr = unsafe { dlsym(mem::transmute(-1i64), CString::new($name).unwrap().as_ptr()) };
+        let fnptr = unsafe {
+            dlsym(mem::transmute(-1i64), CString::new($name).unwrap().as_ptr())
+        };
         test_println!("C {} =\t{:?}", $name, fnptr);
         unsafe { mem::transmute(fnptr) }
     }}
@@ -35,12 +37,23 @@ macro_rules! get_fn {
 //   "before" and "after" the arg-to-replace
 // syntax is non-ideal, but see rust-lang/rust #26444
 macro_rules! intercept {
-    ($name:ident([$($abn:ident: $abt:ty),*] $replace:ident [$($aan:ident: $aat:ty),*]) -> $ret:ty) => {
+    ($name:ident([$($abn:ident: $abt:ty),*]
+                 $replace:ident
+                 [$($aan:ident: $aat:ty),*]) -> $ret:ty) => {
         #[no_mangle]
-        pub fn $name($($abn:$abt,)* $replace: *const c_char $(,$aan:$aat)*) -> $ret {
-            let real: extern fn($($abt,)* *const c_char $(,$aat)*) -> $ret = get_fn!(stringify!($name));
+        pub fn $name($($abn:$abt,)*
+                     $replace: *const c_char
+                     $(,$aan:$aat)*) -> $ret
+        {
+            let real: extern fn($($abt,)*
+                                *const c_char
+                                $(,$aat)*) -> $ret
+                = get_fn!(stringify!($name));
 
-            let requested = str::from_utf8(unsafe { CStr::from_ptr($replace) }.to_bytes()).unwrap();
+            let requested = str::from_utf8(
+                unsafe {
+                    CStr::from_ptr($replace)
+                }.to_bytes()).unwrap();
             let used = redirect(requested);
 
             real($($abn,)* CString::new(used).unwrap().as_ptr() $(,$aan)*)
@@ -52,28 +65,40 @@ intercept!(__xstat64([ver: c_int] path [buf: *mut libc::stat]) -> c_int);
 intercept!(opendir([] name []) -> *const DIR);
 intercept!(open([] pathname [flags: c_int]) -> c_int);
 
+#[cfg(test)] extern crate c_string;
+
 #[cfg(test)]
 fn call_stat(file: &str) {
+    use c_str::ToCStr;
+
     let mut buf: libc::stat = unsafe { mem::zeroed() };
     println!("Rust stat =\t{:p}", &__xstat64);
     println!("stat buf =\t{:p}", &buf);
-    println!("stat: {}", __xstat64(1, CString::new(file).unwrap().as_ptr(), &mut buf));
+    println!("stat: {}", file.with_c_str(|s| __xstat64(1,
+                                                       s,
+                                                       &mut buf)));
     println!("");
     println!("  File: ‘{}’", file);
-    println!("  Size: {}\t\tBlocks: {}\t\tIO Block: {} \t\t{}", buf.st_size,
-                                                                buf.st_blocks,
-                                                                buf.st_blksize,
-                                                                match buf.st_rdev {
-                                                                    0 => "regular file".to_string(),
-                                                                    r => format!("rdev={}", r)
-                                                                });
-    println!("Device: {:x}h/{}d\tInode: {}\t\tLinks: {}", buf.st_dev,
-                                                          buf.st_dev,
-                                                          buf.st_ino,
-                                                          buf.st_nlink);
-    println!("Access: {:o}\t\tUid: {}\t\t\tGid: {}", buf.st_mode,
-                                               buf.st_uid,
-                                               buf.st_gid);
+    println!("  Size: {}\t\tBlocks: {}\t\tIO Block: {} \t\t{}",
+             buf.st_size,
+             buf.st_blocks,
+             buf.st_blksize,
+             match buf.st_rdev {
+                 0 => "regular file".to_string(),
+                 r => format!("rdev={}", r)
+             });
+
+    println!("Device: {:x}h/{}d\tInode: {}\t\tLinks: {}",
+             buf.st_dev,
+             buf.st_dev,
+             buf.st_ino,
+             buf.st_nlink);
+
+    println!("Access: {:o}\t\tUid: {}\t\t\tGid: {}",
+             buf.st_mode,
+             buf.st_uid,
+             buf.st_gid);
+
     println!("Access: {}.{}", buf.st_atime, buf.st_atime_nsec);
     println!("Modify: {}.{}", buf.st_mtime, buf.st_mtime_nsec);
     println!("Change: {}.{}", buf.st_ctime, buf.st_ctime_nsec);
@@ -85,4 +110,3 @@ fn test_stat() {
     call_stat("/etc/fstab");
     call_stat("/home/optoforce/newSRC/lib/fonts");
 }
-

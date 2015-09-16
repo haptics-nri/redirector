@@ -1,8 +1,9 @@
 extern crate libc;
 use libc::{c_char, c_int, c_void, DIR};
-use std::ffi::{CString, CStr};
+use std::ffi::{CString, CStr, NulError};
 use std::mem;
 use std::str;
+use std::process::exit;
 
 extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -10,6 +11,23 @@ extern "C" {
 
 #[cfg(test)] macro_rules! test_println { ($($t:tt)*) => { println!($($t)*) } }
 #[cfg(not(test))] macro_rules! test_println { ($($t:tt)*) => (()) }
+
+macro_rules! attempt {
+    ($code:expr) => {
+        match $code {
+            Ok(v) => v,
+            Err(..) => exit(1)
+        }
+    }
+}
+
+fn with_c_str<S, O, F>(s: S, f: F) -> Result<O, NulError>
+    where S: AsRef<str>,
+          F: FnOnce(*const c_char) -> O
+{
+    let raii = try!(CString::new(s.as_ref()));
+    Ok(f(raii.as_ptr()))
+}
 
 fn redirect(path: &str) -> String {
     if path.starts_with("/home/optoforce/newSRC/lib/fonts") {
@@ -21,9 +39,9 @@ fn redirect(path: &str) -> String {
 
 macro_rules! get_fn {
     ($name:expr) => {{
-        let fnptr = unsafe {
-            dlsym(mem::transmute(-1i64), CString::new($name).unwrap().as_ptr())
-        };
+        let fnptr = attempt!(unsafe {
+            with_c_str($name, |s| dlsym(mem::transmute(-1i64), s))
+        });
         test_println!("C {} =\t{:?}", $name, fnptr);
         unsafe { mem::transmute(fnptr) }
     }}
@@ -56,7 +74,7 @@ macro_rules! intercept {
                 }.to_bytes()).unwrap();
             let used = redirect(requested);
 
-            real($($abn,)* CString::new(used).unwrap().as_ptr() $(,$aan)*)
+            attempt!(with_c_str(used, |s| real($($abn,)* s $(,$aan)*)))
         }
     }
 }
@@ -65,18 +83,13 @@ intercept!(__xstat64([ver: c_int] path [buf: *mut libc::stat]) -> c_int);
 intercept!(opendir([] name []) -> *const DIR);
 intercept!(open([] pathname [flags: c_int]) -> c_int);
 
-#[cfg(test)] extern crate c_string;
-
 #[cfg(test)]
 fn call_stat(file: &str) {
-    use c_str::ToCStr;
-
     let mut buf: libc::stat = unsafe { mem::zeroed() };
     println!("Rust stat =\t{:p}", &__xstat64);
     println!("stat buf =\t{:p}", &buf);
-    println!("stat: {}", file.with_c_str(|s| __xstat64(1,
-                                                       s,
-                                                       &mut buf)));
+    println!("stat: {}", attempt!(with_c_str(file,
+                                             |s| __xstat64(1, s, &mut buf))));
     println!("");
     println!("  File: ‘{}’", file);
     println!("  Size: {}\t\tBlocks: {}\t\tIO Block: {} \t\t{}",
